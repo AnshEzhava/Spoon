@@ -65,6 +65,33 @@ public enum GitHub {
         return try JSONDecoder().decode(User.self, from: data)
     }
 
+    public struct CreatedRepo: Decodable, Sendable {
+        public let cloneURL: String
+        public let htmlURL: URL
+        enum CodingKeys: String, CodingKey { case cloneURL = "clone_url", htmlURL = "html_url" }
+    }
+
+    /// Creates a repository under the token's own account. Needs the `repo` scope.
+    public static func createRepo(name: String, description: String, isPrivate: Bool, token: String) async throws -> CreatedRepo {
+        var req = URLRequest(url: URL(string: "https://api.github.com/user/repos")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "description": description, "private": isPrivate])
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try parseCreated(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+
+    static func parseCreated(_ data: Data, status: Int) throws -> CreatedRepo {
+        if status == 201, let repo = try? JSONDecoder().decode(CreatedRepo.self, from: data) { return repo }
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        // A 422's top-level message is just "Repository creation failed."; the reason is in errors[].
+        let reason = ((obj?["errors"] as? [[String: Any]])?.compactMap { $0["message"] as? String }.first)
+            ?? obj?["message"] as? String ?? "HTTP \(status)"
+        throw AuthError(description: "GitHub couldn't create the repository: \(reason).")
+    }
+
     static func post(_ url: String, _ form: [String: String]) async throws -> Data {
         var req = URLRequest(url: URL(string: url)!)
         req.httpMethod = "POST"

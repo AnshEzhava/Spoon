@@ -13,7 +13,7 @@ enum RepoActions {
         #selector(TabWindowController.checkoutAction), #selector(TabWindowController.newBranchAction),
         #selector(TabWindowController.newTagAction), #selector(TabWindowController.mergeAction),
         #selector(TabWindowController.rebaseAction), #selector(TabWindowController.addRemoteAction),
-        #selector(TabWindowController.focusCommit), #selector(TabWindowController.operationHistory),
+        #selector(TabWindowController.publishAction), #selector(TabWindowController.focusCommit), #selector(TabWindowController.operationHistory),
         #selector(TabWindowController.undo(_:)), #selector(TabWindowController.redo(_:)),
     ]
 
@@ -21,6 +21,7 @@ enum RepoActions {
         switch action {
         case #selector(TabWindowController.operationHistory), #selector(TabWindowController.focusCommit): return true
         case #selector(TabWindowController.undo(_:)), #selector(TabWindowController.redo(_:)): return c.busy == nil
+        case #selector(TabWindowController.publishAction): return c.busy == nil && !c.remotes.contains { $0.name == "origin" }
         default: return c.busy == nil
         }
     }
@@ -81,8 +82,11 @@ enum RepoActions {
 
     static func pushDialog(_ c: RepoController?, force: Bool = false) {
         guard let c else { return }
+        guard !c.remotes.isEmpty else { publish(c); return } // nowhere to push yet
         Sheets.present(PushDialog(controller: c, force: force), on: c.window)
     }
+
+    static func publish(_ c: RepoController) { Sheets.present(PublishDialog(controller: c), on: c.window) }
 
     // MARK: Branches
 
@@ -287,6 +291,7 @@ extension TabWindowController {
     @objc func mergeAction(_ s: Any?) { repoController.map { HistoryActions.mergeDialog($0, ref: nil) } }
     @objc func rebaseAction(_ s: Any?) { repoController.map { HistoryActions.rebaseDialog($0, onto: nil) } }
     @objc func addRemoteAction(_ s: Any?) { repoController.map(RepoActions.addRemote) }
+    @objc func publishAction(_ s: Any?) { repoController.map(RepoActions.publish) }
     @objc func focusCommit(_ s: Any?) { repoController?.view = .localChanges; repoController?.focusCommitToken += 1 }
     @objc func operationHistory(_ s: Any?) { repoController.map { Sheets.present(OperationHistoryView(controller: $0), on: window) } }
     @objc func undo(_ s: Any?) { repoController.map { RepoActions.undo($0) } }

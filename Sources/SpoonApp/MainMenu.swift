@@ -83,6 +83,7 @@ enum MainMenu {
             item("Merge…", #selector(TabWindowController.mergeAction(_:)), "m", [.command, .shift]),
             item("Rebase…", #selector(TabWindowController.rebaseAction(_:)), "e", [.command, .shift]),
             item("Add Remote…", #selector(TabWindowController.addRemoteAction(_:))),
+            item("Publish to GitHub…", #selector(TabWindowController.publishAction(_:))),
             .separator(),
             item("Show in Finder", #selector(TabWindowController.showInFinder(_:)), "o", [.command, .control]),
             item("Open in Terminal", #selector(TabWindowController.openInTerminal(_:)), "t", [.command, .control]),

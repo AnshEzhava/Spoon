@@ -106,6 +106,54 @@ struct PullDialog: View {
     }
 }
 
+/// Publish to GitHub: create the repository with the signed-in account, add it as origin, push the current branch.
+struct PublishDialog: View {
+    let controller: RepoController
+    @State private var name = ""
+    @State private var about = ""
+    @State private var isPrivate = true
+    private let login = Accounts.login(for: AccountsPane.host)
+
+    var body: some View {
+        let branch = controller.currentBranch ?? ""
+        let blocker = login == nil ? "Sign in to GitHub to publish this repository."
+            : controller.headSHA == nil ? "Make a commit first: there's nothing to push yet."
+            : branch.isEmpty ? "Check out a branch first: HEAD is detached." : nil
+        Dialog(title: "Publish to GitHub",
+               subtitle: blocker ?? "Create a repository on github.com as \(login!) and push \(branch) to it.",
+               command: login == nil ? "" : "git remote add origin https://github.com/\(login!)/\(name).git && git push -u origin \(branch)",
+               action: login == nil ? "Sign In…" : "Publish",
+               disabled: login != nil && (blocker != nil || name.isEmpty),
+               onConfirm: login == nil ? Self.openAccounts : run) {
+            if login != nil {
+                TextField("Name:", text: $name)
+                TextField("Description:", text: $about, prompt: Text("Optional"))
+                Toggle("Private", isOn: $isPrivate)
+            }
+        }
+        .onAppear { name = controller.name }
+    }
+
+    static func openAccounts() {
+        UserDefaults.standard.set("accounts", forKey: "settings.tab")
+        AppDelegate.shared.showSettings(nil)
+    }
+
+    func run() {
+        guard let branch = controller.currentBranch else { return }
+        let n = name, d = about, p = isPrivate, host = AccountsPane.host
+        controller.perform("Publish to GitHub", context: .push) { repo, out in
+            guard let token = Accounts.credential(host: host)?.token else {
+                throw GitHub.AuthError(description: "Couldn't read your GitHub token from the Keychain. Sign in again in Settings ▸ Accounts.")
+            }
+            let created = try await GitHub.createRepo(name: n, description: d, isPrivate: p, token: token)
+            // Created but push failed → origin is already set, so a plain Push finishes the job.
+            try await repo.addRemote("origin", url: created.cloneURL)
+            try await repo.push([PushSpec(local: branch, remote: "origin", remoteBranch: branch)], options: PushOptions(setUpstream: true), output: out)
+        }
+    }
+}
+
 struct PushDialog: View {
     let controller: RepoController
     var force = false

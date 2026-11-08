@@ -12,6 +12,18 @@ import Testing
         #expect(p("not json") == .failed("Unexpected response from GitHub."))
     }
 
+    @Test func parsesCreateRepoResponses() throws {
+        let ok = try GitHub.parseCreated(Data(#"{"clone_url":"https://github.com/me/Spoon.git","html_url":"https://github.com/me/Spoon"}"#.utf8), status: 201)
+        #expect(ok.cloneURL == "https://github.com/me/Spoon.git")
+        func failure(_ json: String, _ status: Int) -> String {
+            do { _ = try GitHub.parseCreated(Data(json.utf8), status: status); return "no error" } catch { return "\(error)" }
+        }
+        let taken = #"{"message":"Repository creation failed.","errors":[{"resource":"Repository","field":"name","message":"name already exists on this account"}]}"#
+        #expect(failure(taken, 422) == "GitHub couldn't create the repository: name already exists on this account.")
+        #expect(failure(#"{"message":"Bad credentials"}"#, 401) == "GitHub couldn't create the repository: Bad credentials.")
+        #expect(failure("", 502) == "GitHub couldn't create the repository: HTTP 502.")
+    }
+
     /// Real `git credential fill`: github.com gets Spoon's helper, even over a global helper; other hosts keep the user's.
     @Test func credentialHelperIsScopedToHost() async throws {
         let dir = TestRepo.tempDir("cred")
