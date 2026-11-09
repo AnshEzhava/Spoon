@@ -31,7 +31,7 @@ final class RepoController {
     let libraryID: UUID
     var name: String { repo.workTree.lastPathComponent }
 
-    var view: RepoView = .history
+    var view: RepoView = .localChanges
     var refs: [Ref] = []
     var stashes: [Stash] = []
     var remotes: [Remote] = []
