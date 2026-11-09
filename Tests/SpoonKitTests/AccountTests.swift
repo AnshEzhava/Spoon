@@ -24,6 +24,14 @@ import Testing
         #expect(failure("", 502) == "GitHub couldn't create the repository: HTTP 502.")
     }
 
+    @Test func parsesRepoList() throws {
+        let json = #"[{"full_name":"acme/api","clone_url":"https://github.com/acme/api.git","private":true,"description":null}]"#
+        let repos = try GitHub.parseRepos(Data(json.utf8), status: 200)
+        #expect(repos.map(\.fullName) == ["acme/api"])
+        #expect(repos[0].cloneURL == "https://github.com/acme/api.git" && repos[0].isPrivate)
+        #expect(throws: GitHub.AuthError.self) { try GitHub.parseRepos(Data(#"{"message":"Bad credentials"}"#.utf8), status: 401) }
+    }
+
     /// Real `git credential fill`: github.com gets Spoon's helper, even over a global helper; other hosts keep the user's.
     @Test func credentialHelperIsScopedToHost() async throws {
         let dir = TestRepo.tempDir("cred")

@@ -534,6 +534,11 @@ struct CloneDialog: View {
     @State private var progress = ""
     @State private var running = false
     @State private var error: String?
+    @State private var repos: [GitHub.Repo] = []
+    @State private var reposStatus = ""
+    @State private var filter = ""
+    @State private var picked: String?
+    private let login = Accounts.login(for: AccountsPane.host)
     @Environment(\.dismissSheet) private var dismiss
 
     var derivedName: String {
@@ -542,10 +547,34 @@ struct CloneDialog: View {
         return n
     }
 
+    var shownRepos: [GitHub.Repo] {
+        guard !filter.isEmpty else { return repos }
+        return repos.compactMap { r in Fuzzy.score(r.fullName, filter).map { (r, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Clone Repository").font(.system(size: 14, weight: .bold))
             Form {
+                LabeledContent("GitHub:") {
+                    if login == nil {
+                        Button("Sign in to browse your repositories…") { dismiss(); PublishDialog.openAccounts() }.buttonStyle(.link)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("", text: $filter, prompt: Text("Filter repositories"))
+                            List(shownRepos, selection: $picked) { r in
+                                HStack {
+                                    Text(r.fullName)
+                                    Spacer()
+                                    if r.isPrivate { Image(systemName: "lock").foregroundStyle(.secondary) }
+                                }
+                            }
+                            .listStyle(.bordered(alternatesRowBackgrounds: true))
+                            .frame(height: 160)
+                            if !reposStatus.isEmpty { Text(reposStatus).font(.system(size: 11)).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
                 TextField("URL:", text: $url, prompt: Text("https://github.com/owner/repo.git"))
                 HStack {
                     Button(url.hasPrefix("http") ? "Switch to SSH" : "Switch to HTTPS") { url = RemoteDialog.switchProtocol(url) }.disabled(url.isEmpty)
@@ -597,6 +626,25 @@ struct CloneDialog: View {
         }
         .padding(20)
         .frame(width: 520)
+        .onChange(of: picked) {
+            guard let r = repos.first(where: { $0.id == picked }) else { return }
+            url = r.cloneURL
+            test = ""
+        }
+        .task {
+            guard login != nil else { return }
+            guard let token = Accounts.credential(host: AccountsPane.host)?.token else {
+                reposStatus = "Couldn't read your GitHub token from the Keychain. Sign in again in Settings ▸ Accounts."
+                return
+            }
+            reposStatus = "Loading…"
+            do {
+                repos = try await GitHub.repos(token: token)
+                reposStatus = repos.isEmpty ? "No repositories found." : ""
+            } catch {
+                reposStatus = "\(error)"
+            }
+        }
         .onAppear {
             if url.isEmpty, let s = NSPasteboard.general.string(forType: .string),
                s.hasPrefix("https://") || s.hasPrefix("git@") || s.hasPrefix("ssh://") { url = s.trimmingCharacters(in: .whitespacesAndNewlines) }

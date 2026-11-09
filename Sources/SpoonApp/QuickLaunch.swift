@@ -61,23 +61,28 @@ struct QuickItem: Identifiable {
 
 @MainActor @Observable
 final class QuickLaunchModel {
-    var query = "" { didSet { selected = 0 } }
+    var query = "" { didSet { selected = 0; update() } }
     var selected = 0
+    /// Stored, not computed: redraws (arrow keys, selection) must not re-run the match.
+    private(set) var results: [QuickItem] = []
     @ObservationIgnored weak var window: TabWindowController?
     @ObservationIgnored private var all: [QuickItem] = []
     @ObservationIgnored private var files: [String] = []
+    @ObservationIgnored private var search: Task<Void, Never>?
     /// Frequency + recency learning (QL-04).
     @ObservationIgnored @AppStorage("quicklaunch.usage") private var usageRaw = ""
 
     func reset(window: TabWindowController?) {
         self.window = window
-        query = ""
-        selected = 0
         all = commands() + repositories() + groups() + branches()
         files = []
+        query = ""
         if let c = window?.repoController {
             Task {
-                files = (try? await c.repo.files(at: "HEAD")) ?? []
+                let f = (try? await c.repo.files(at: "HEAD")) ?? []
+                guard self.window?.repoController === c else { return }
+                files = f
+                update() // the user may already be typing
             }
         }
     }
@@ -93,7 +98,9 @@ final class QuickLaunchModel {
         usage = u
     }
 
-    var results: [QuickItem] {
+    /// Empty queries are cheap and answered at once; matching runs off the main thread so the text field never waits on it.
+    private func update() {
+        search?.cancel()
         var q = query
         var kinds: Set<QuickItem.Kind>? = nil
         if let first = q.first {
@@ -101,37 +108,50 @@ final class QuickLaunchModel {
             case ">": kinds = [.command]
             case "@": kinds = [.branch]
             case "/": kinds = [.file]
-            case ":": return commitLookup(String(q.dropFirst()))
+            case ":": results = commitLookup(String(q.dropFirst())); return
             default: break
             }
             if kinds != nil { q.removeFirst() }
         }
         q = q.trimmingCharacters(in: .whitespaces)
-        var pool = all
-        if kinds?.contains(.file) == true || (!q.isEmpty && kinds == nil) { pool += fileItems(q) }
-        if let kinds { pool = pool.filter { kinds.contains($0.kind) } }
+        let pool = kinds.map { k in all.filter { k.contains($0.kind) } } ?? all
+        let u = usage
         if q.isEmpty {
             let recentRepos = pool.filter { $0.kind == .repository }.prefix(6)
-            let u = usage
             let recentCommands = pool.filter { $0.kind == .command && u[$0.title] != nil }.sorted { u[$0.title]! > u[$1.title]! }.prefix(6)
-            return kinds == nil ? Array(recentRepos) + Array(recentCommands) + pool.filter { $0.kind == .branch }.prefix(8) : Array(pool.prefix(50))
+            results = kinds == nil ? Array(recentRepos) + Array(recentCommands) + pool.filter { $0.kind == .branch }.prefix(8) : Array(pool.prefix(50))
+            return
         }
-        let u = usage
-        return pool.compactMap { item -> (QuickItem, Int)? in
-            guard let s = Fuzzy.score(item.title, q) ?? Fuzzy.score(item.subtitle + " " + item.title, q).map({ $0 - 5 }) else { return nil }
-            return (item, s + min(u[item.title] ?? 0, 20))
+        let titles = pool.map(\.title), fulls = pool.map { $0.subtitle + " " + $0.title }
+        let files = kinds == nil || kinds!.contains(.file) ? self.files : []
+        search = Task {
+            let ranked = await Self.rank(q, titles: titles, fulls: fulls, files: files, usage: u)
+            guard !Task.isCancelled else { return } // a newer keystroke owns the results
+            results = ranked.compactMap { $0 < pool.count ? pool[$0] : fileItem(files[$0 - pool.count]) }
         }
-        .sorted { $0.1 > $1.1 }
-        .prefix(60)
-        .map(\.0)
     }
 
-    private func fileItems(_ q: String) -> [QuickItem] {
-        guard let c = window?.repoController, !q.isEmpty else { return [] }
-        return files.lazy.filter { Fuzzy.score($0, q) != nil }.prefix(40).map { path in
-            QuickItem(kind: .file, title: path, symbol: "doc") {
-                NSWorkspace.shared.activateFileViewerSelecting([c.repo.workTree.appendingPathComponent(path)])
-            }
+    /// Indices into `titles` then `files` (offset by `titles.count`), best first: at most 60, of which at most 40 files.
+    @concurrent nonisolated private static func rank(_ q: String, titles: [String], fulls: [String], files: [String], usage: [String: Int]) async -> [Int] {
+        let qk = Fuzzy.key(q)
+        func boost(_ s: String) -> Int { min(usage[s] ?? 0, 20) }
+        var items: [(Int, Int)] = []
+        for i in titles.indices {
+            guard let s = Fuzzy.score(Fuzzy.key(titles[i]), qk) ?? Fuzzy.score(Fuzzy.key(fulls[i]), qk).map({ $0 - 5 }) else { continue }
+            items.append((i, s + boost(titles[i])))
+        }
+        var hits: [(Int, Int)] = []
+        for i in files.indices {
+            if i % 1024 == 0, Task.isCancelled { return [] }
+            if let s = Fuzzy.score(Fuzzy.key(files[i]), qk) { hits.append((titles.count + i, s + boost(files[i]))) }
+        }
+        return (items + hits.sorted { $0.1 > $1.1 }.prefix(40)).sorted { $0.1 > $1.1 }.prefix(60).map(\.0)
+    }
+
+    private func fileItem(_ path: String) -> QuickItem? {
+        guard let c = window?.repoController else { return nil }
+        return QuickItem(kind: .file, title: path, symbol: "doc") {
+            NSWorkspace.shared.activateFileViewerSelecting([c.repo.workTree.appendingPathComponent(path)])
         }
     }
 
@@ -226,7 +246,8 @@ struct QuickLaunchView: View {
             Divider()
             ScrollViewReader { proxy in
                 List {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { i, item in
+                    // Positional identity: rows are reused as results change instead of rebuilt.
+                    ForEach(Array(results.enumerated()), id: \.offset) { i, item in
                         row(item, highlighted: i == model.selected)
                             .id(i)
                             .contentShape(Rectangle())
@@ -259,11 +280,20 @@ struct QuickLaunchView: View {
         var q = model.query
         if let f = q.first, ">@/:".contains(f) { q.removeFirst() }
         let hits = Fuzzy.matchedIndices(title, q.trimmingCharacters(in: .whitespaces))
-        var text = Text("")
-        for (i, ch) in title.enumerated() {
-            text = text + Text(String(ch)).fontWeight(hits.contains(i) ? .bold : .regular)
+        // One run per bold/regular stretch; a Text per character made layout crawl.
+        var out = AttributedString(), run = "", bold = false
+        func flush() {
+            var a = AttributedString(run)
+            if bold { a.inlinePresentationIntent = .stronglyEmphasized }
+            out += a
+            run = ""
         }
-        return text.font(.system(size: 13))
+        for (i, ch) in title.enumerated() {
+            if hits.contains(i) != bold { flush(); bold.toggle() }
+            run.append(ch)
+        }
+        flush()
+        return Text(out).font(.system(size: 13))
     }
 
     func run(_ results: [QuickItem]) {

@@ -92,6 +92,36 @@ public enum GitHub {
         throw AuthError(description: "GitHub couldn't create the repository: \(reason).")
     }
 
+    public struct Repo: Decodable, Sendable, Identifiable {
+        public let fullName: String
+        public let cloneURL: String
+        public let isPrivate: Bool
+        public var id: String { fullName }
+        enum CodingKeys: String, CodingKey { case fullName = "full_name", cloneURL = "clone_url", isPrivate = "private" }
+    }
+
+    /// Repos the token can see (own, collaborator, org member), most recently pushed first.
+    /// Org repos only show if the org allows this OAuth app.
+    public static func repos(token: String) async throws -> [Repo] {
+        var all: [Repo] = [], page = 1
+        while true {
+            var req = URLRequest(url: URL(string: "https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=\(page)")!)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: req)
+            let batch = try parseRepos(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+            all += batch
+            if batch.count < 100 { return all }
+            page += 1
+        }
+    }
+
+    static func parseRepos(_ data: Data, status: Int) throws -> [Repo] {
+        if status == 200, let repos = try? JSONDecoder().decode([Repo].self, from: data) { return repos }
+        let message = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+        throw AuthError(description: "Couldn't load your GitHub repositories: \(message).")
+    }
+
     static func post(_ url: String, _ form: [String: String]) async throws -> Data {
         var req = URLRequest(url: URL(string: url)!)
         req.httpMethod = "POST"

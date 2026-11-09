@@ -425,17 +425,22 @@ struct DiffPane: View {
 
 /// Subsequence fuzzy matching with a contiguity bonus (Quick Launch, file filters).
 enum Fuzzy {
-    static func score(_ candidate: String, _ query: String) -> Int? {
-        if query.isEmpty { return 0 }
-        let c = Array(candidate.lowercased()), q = Array(query.lowercased())
+    static func score(_ candidate: String, _ query: String) -> Int? { score(key(candidate), key(query)) }
+
+    /// Lowercased scalars: several times cheaper to scan than `[Character]`.
+    static func key(_ s: String) -> [Unicode.Scalar] { Array(s.lowercased().unicodeScalars) }
+
+    static func score(_ c: [Unicode.Scalar], _ q: [Unicode.Scalar]) -> Int? {
+        if q.isEmpty { return 0 }
         var score = 0, qi = 0, last = -2
-        for (i, ch) in c.enumerated() where qi < q.count && ch == q[qi] {
-            score += (i == last + 1) ? 5 : 1
-            if i == 0 || "/ -_.".contains(c[max(i - 1, 0)]) { score += 3 }
+        for i in c.indices where c[i] == q[qi] {
+            score += i == last + 1 ? 5 : 1
+            if i == 0 { score += 3 } else { switch c[i - 1] { case "/", " ", "-", "_", ".": score += 3; default: break } }
             last = i
             qi += 1
+            if qi == q.count { return score - c.count / 10 }
         }
-        return qi == q.count ? score - c.count / 10 : nil
+        return nil
     }
 
     static func matchedIndices(_ candidate: String, _ query: String) -> Set<Int> {

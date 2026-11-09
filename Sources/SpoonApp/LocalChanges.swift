@@ -462,6 +462,7 @@ struct CommitBox: View {
     let controller: RepoController
     @Bindable var model: LocalChangesModel
     @FocusState private var subjectFocused: Bool
+    @FocusState private var bodyFocused: Bool
     @State private var showHooks = false
     private var settings: Settings { AppModel.shared.settings }
 
@@ -481,6 +482,8 @@ struct CommitBox: View {
                     .font(.system(size: 13, weight: .medium))
                     .focused($subjectFocused)
                     .onSubmit { model.commit() }
+                    .padding(.leading, 5) // line up with TextEditor's built-in inset
+                    .fieldBox(focused: subjectFocused)
                 let n = model.subject.count
                 if n > settings.subjectSoftLimit - 10 {
                     Text("\(n)").font(.system(size: 11).monospacedDigit())
@@ -511,6 +514,8 @@ struct CommitBox: View {
                 .overlay(alignment: .topLeading) {
                     if model.body.isEmpty { Text("Description").foregroundStyle(.tertiary).font(.system(size: 12)).padding(.leading, 5).allowsHitTesting(false) }
                 }
+                .focused($bodyFocused)
+                .fieldBox(focused: bodyFocused)
             HStack(spacing: 10) {
                 Toggle("Amend", isOn: $model.amend)
                 Toggle("Sign-off", isOn: $model.signOff)
@@ -555,5 +560,14 @@ struct CommitBox: View {
         .onChange(of: model.body) { _, _ in model.saveDraft() }
         .onChange(of: controller.focusCommitToken) { _, _ in subjectFocused = true }
         .onChange(of: model.hookOutput) { _, out in if !out.isEmpty && model.committing { showHooks = true } }
+    }
+}
+
+extension View {
+    /// Visible text-field well for plain fields: darker fill, hairline border, accent ring while focused.
+    func fieldBox(focused: Bool) -> some View {
+        padding(.vertical, 5).padding(.horizontal, 4)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(focused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: focused ? 2 : 1))
     }
 }

@@ -50,8 +50,8 @@ app: build $(ICON) ## Assemble and sign build/Spoon.app (SIGN=adhoc|dev|dist)
 	@$(CODESIGN) $(APP)
 	@echo "Built $(APP) ($(CONFIG), signed: $(SIGN))"
 
-signed: ## Build the app signed with your Apple Development certificate (this Mac only)
-	@$(MAKE) app SIGN=dev
+signed: ## Build the optimized app signed with your Apple Development certificate (this Mac only)
+	@$(MAKE) app SIGN=dev CONFIG=release
 
 dev: app ## Build debug app and run it in the foreground with logs
 	SPOON_DEV=1 $(APP)/Contents/MacOS/Spoon
