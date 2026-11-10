@@ -83,6 +83,15 @@ public actor Repository {
         CommitDetails.parse(try await git.run(CommitDetails.arguments(sha), in: workTree, background: true).stdout)
     }
 
+    /// Working tree vs HEAD (the empty tree before the first commit): what a commit would contain. Skips untracked files.
+    public func diffAgainstHead(paths: [String], options: DiffOptions = .init()) async throws -> [FileDiff] {
+        var base = "HEAD"
+        if !(await hasHead) {
+            base = try await git.run(["hash-object", "-t", "tree", "/dev/null"], in: workTree, background: true).output.trimmingCharacters(in: .newlines)
+        }
+        return DiffParser.parse(try await git.run(["diff"] + options.flags + [base, "--"] + paths, in: workTree, background: true).stdout)
+    }
+
     /// Diff of a commit against a parent (1-based); root commits diff against the empty tree.
     public func diff(commit sha: String, parent: Int = 1, options: DiffOptions = .init()) async throws -> [FileDiff] {
         let args = parent == 1

@@ -290,4 +290,89 @@ struct SeededRNG: RandomNumberGenerator {
         #expect(GitProgress.parse("Counting objects: 100% (3/3)\rReceiving objects:  43% (10/23)\r") == "receiving objects 43%")
         #expect(GitProgress.parse("remote: Compressing objects:  50% (1/2)") == "compressing objects 50%")
     }
+
+    // MARK: Commit without staging
+
+    @Test func commitSelectedCommitsExactlyTheCheckedFiles() async throws {
+        let r = try await TestRepo()
+        try await r.commit("base", files: ["a": "1\n", "b": "1\n"])
+        try r.write("a", "2\n")
+        try r.write("b", "2\n")
+        try r.write("new", "n\n")
+        try await r.run("add", "b")  // stray staging from the CLI must not leak in
+        let repo = try await r.repository()
+        try await repo.commitSelected(excluding: ["b"], partial: [], message: "pick")
+        #expect(try await r.run("show", "--name-only", "--format=", "HEAD") == "a\nnew")
+        #expect(try r.read("b") == "2\n")
+        #expect(try await repo.status().changes.map(\.path) == ["b"])
+    }
+
+    @Test func commitSelectedLeavesOutExcludedLines() async throws {
+        let r = try await TestRepo()
+        let base = (1...20).map { "l\($0)" }
+        try await r.commit("base", files: ["f": base.joined(separator: "\n") + "\n"])
+        var changed = base
+        changed[1] = "top"
+        changed[18] = "bottom"
+        try r.write("f", changed.joined(separator: "\n") + "\n")
+        let repo = try await r.repository()
+        let file = try #require(try await repo.diffAgainstHead(paths: ["f"]).first)
+        #expect(file.hunks.count == 2)
+        let keep = PatchBuilder.lines(of: file, hunks: [0])
+        try await repo.commitSelected(excluding: [], partial: [(file, keep)], message: "top only")
+        let committed = try await r.run("show", "HEAD:f")
+        #expect(committed.contains("top") && !committed.contains("bottom"))
+        #expect(try r.read("f") == changed.joined(separator: "\n") + "\n")
+    }
+
+    @Test func commitSelectedRefusesStaleLinePicks() async throws {
+        let r = try await TestRepo()
+        try await r.commit("base", files: ["f": "a\nb\n"])
+        try r.write("f", "a\nB\n")
+        let repo = try await r.repository()
+        let file = try #require(try await repo.diffAgainstHead(paths: ["f"]).first)
+        try r.write("f", "a\nC\n")
+        await #expect(throws: GitError.self) {
+            try await repo.commitSelected(excluding: [], partial: [(file, [])], message: "stale")
+        }
+        #expect(try await r.run("rev-list", "--count", "HEAD") == "1")
+    }
+
+    @Test func commitSelectedPartialNewFileInFreshRepo() async throws {
+        let r = try await TestRepo()
+        try r.write("n", "one\ntwo\n")
+        try r.write("skip", "x\n")
+        let repo = try await r.repository()
+        let file = try #require(try await repo.diffUntracked("n"))
+        let firstLine = Set(PatchBuilder.lines(of: file, hunks: [0]).filter { file.hunks[0].lines[$0.line].text == "one" })
+        try await repo.commitSelected(excluding: ["skip"], partial: [(file, firstLine)], message: "first")
+        #expect(try await r.run("show", "HEAD:n") == "one")
+        #expect(try await r.run("show", "--name-only", "--format=", "HEAD") == "n")
+    }
+
+    @Test func commitSelectedWithEverythingCheckedFinishesAMerge() async throws {
+        let r = try await TestRepo()
+        try await r.commit("base", files: ["a": "1\n", "b": "1\n"])
+        _ = try await r.run("switch", "-q", "-c", "topic")
+        try await r.commit("topic", files: ["b": "2\n"])
+        _ = try await r.run("switch", "-q", "main")
+        try await r.commit("main", files: ["a": "2\n"])
+        _ = try await r.run("merge", "--no-ff", "--no-commit", "topic")
+        try r.write("extra", "x\n")
+        let repo = try await r.repository()
+        try await repo.commitSelected(excluding: [], partial: [], message: "merge topic")
+        #expect(try await r.run("rev-list", "--parents", "-1", "HEAD").split(separator: " ").count == 3)
+        #expect(try await repo.status().changes.isEmpty)
+    }
+
+    @Test func amendWithNothingCheckedOnlyRewords() async throws {
+        let r = try await TestRepo()
+        try await r.commit("first", files: ["a": "1\n"])
+        try r.write("a", "2\n")
+        let repo = try await r.repository()
+        try await repo.commitSelected(excluding: ["a"], partial: [], message: "reworded", options: .init(amend: true))
+        #expect(try await r.run("log", "-1", "--format=%s") == "reworded")
+        #expect(try await r.run("show", "HEAD:a") == "1")
+        #expect(try r.read("a") == "2\n")
+    }
 }

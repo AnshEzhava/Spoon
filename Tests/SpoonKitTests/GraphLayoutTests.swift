@@ -25,6 +25,14 @@ import Testing
         #expect(rows[4].width == 1)  // lane 1 freed
     }
 
+    @Test func firstParentOnlyIgnoresMergedInParents() {
+        // --first-parent hides f, but m still lists it as a parent
+        var g = GraphLayout(mainTip: "m", firstParentOnly: true)
+        g.append([Commit.stub("m", parents: ["a", "f"]), Commit.stub("a", parents: ["o"]), Commit.stub("o", parents: [])])
+        #expect(g.rows.map(\.lane) == [0, 0, 0])
+        #expect(g.rows.allSatisfy { $0.width == 1 })
+    }
+
     @Test func mainKeepsLaneZeroEvenWhenAnotherTipIsNewer() {
         let rows = layout([("x", ["m"]), ("m", ["o"]), ("o", [])], main: "m")
         #expect(rows[0].lane == 1)  // feature tip above main

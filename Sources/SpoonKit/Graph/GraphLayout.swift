@@ -37,9 +37,12 @@ public struct GraphLayout: Sendable {
     public static let paletteSize = 12
     private var slots: [Slot?] = []
     private var nextColor = 1
+    /// `git log --first-parent` still prints every parent; merged-in parents never arrive, so they'd hold lanes open forever.
+    private let firstParentOnly: Bool
     public private(set) var rows: [GraphRow] = []
 
-    public init(mainTip: String? = nil) {
+    public init(mainTip: String? = nil, firstParentOnly: Bool = false) {
+        self.firstParentOnly = firstParentOnly
         if let mainTip { slots = [Slot(sha: mainTip, color: 0, firstParent: true, visible: false)] }
     }
 
@@ -75,7 +78,7 @@ public struct GraphLayout: Sendable {
             set(lane, Slot(sha: first, color: color, firstParent: true, visible: true))
             row.outgoing.append(GraphEdge(from: lane, to: lane, color: color))
         }
-        for parent in c.parents.dropFirst() {
+        for parent in c.parents.dropFirst() where !firstParentOnly {
             if let existing = slots.firstIndex(where: { $0?.sha == parent && $0?.visible == true }) {
                 row.outgoing.append(GraphEdge(from: lane, to: existing, color: slots[existing]!.color))
             } else {

@@ -358,8 +358,9 @@ struct DiffPane: View {
     @Binding var search: String
     var reload: () -> Void
     var extraControls: AnyView? = nil
-    var selection: Binding<IndexSet>? = nil
     weak var menuDelegate: DiffViewDelegate? = nil
+    var included: Set<LineRef>? = nil
+    var onToggle: ((Set<LineRef>) -> Void)? = nil
     @State private var jump = 0
     @State private var forceLarge: String?
     @Environment(\.self) private var env
@@ -405,7 +406,7 @@ struct DiffPane: View {
                     DiffTextView(rows: DiffRows.build([file], sideBySide: app.settings.diffSideBySide, fileHeaders: false),
                                  sideBySide: app.settings.diffSideBySide, showInvisibles: app.settings.showInvisibles,
                                  search: search, scrollToken: file.path.hashValue, jump: jump,
-                                 menuDelegate: menuDelegate, selectionBinding: selection)
+                                 menuDelegate: menuDelegate, included: included, onToggle: onToggle)
                 }
             } else {
                 ContentUnavailableView("No file selected", systemImage: "doc")

@@ -57,6 +57,7 @@ enum MainMenu {
             item("Show Current Branch Only", #selector(TabWindowController.toggleCurrentBranchOnly(_:)), "a", [.command, .shift]),
             item("Hide Remote Branches", #selector(TabWindowController.toggleHideRemotes(_:))),
             item("Hide Tags", #selector(TabWindowController.toggleHideTags(_:))),
+            item("First Parent Only", #selector(TabWindowController.toggleFirstParent(_:))),
             .separator(),
             item("Refresh", #selector(TabWindowController.refresh(_:)), "r"),
             item("Toggle Repository Sidebar", #selector(TabWindowController.toggleRepoSidebar(_:)), "s", [.command, .option]),

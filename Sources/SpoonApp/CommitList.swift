@@ -79,9 +79,14 @@ final class CommitListController: NSViewController, NSTableViewDataSource, NSTab
         if abs(subject.width - w) > 0.5 { subject.width = w }
     }
 
+    /// Grows only, so reloads (every fetch, commit, checkout) don't shift the subjects sideways. Resets when the filter changes.
+    private var graphLanes = 1
+    private var graphFilter: HistoryFilter?
+
     private func updateGraphWidth() {
-        let maxLanes = controller.rows.prefix(300).map(\.width).max() ?? 1
-        let width = min(CGFloat(maxLanes) * GraphCell.laneWidth + 8, 160)
+        if graphFilter != controller.filter { graphFilter = controller.filter; graphLanes = 1 }
+        graphLanes = max(graphLanes, controller.rows.prefix(300).map(\.width).max() ?? 1)
+        let width = min(CGFloat(graphLanes) * GraphCell.laneWidth + 8, 160)
         if let col = table.tableColumn(withIdentifier: .init("graph")), abs(col.width - width) > 1 { col.width = width; fitSubject() }
     }
 
@@ -239,11 +244,13 @@ final class GraphCell: NSView {
     // NSView stopped clipping by default in macOS 14; lanes past the capped column width would paint over the subject.
     override var clipsToBounds: Bool { get { true } set {} }
 
-    private func x(_ lane: Int) -> CGFloat { CGFloat(lane) * Self.laneWidth + Self.laneWidth / 2 + 2 }
-
     override func draw(_ dirtyRect: NSRect) {
         guard let row else { return }
         let h = bounds.height, mid = h / 2
+        // Last column that fits. Lanes past it are hidden: their nodes sit in this column, lines to them become short stubs.
+        let cap = max(0, Int((bounds.width - 16) / Self.laneWidth))
+        func x(_ lane: Int) -> CGFloat { CGFloat(min(lane, cap)) * Self.laneWidth + Self.laneWidth / 2 + 2 }
+        let stub = Self.laneWidth * 0.6
         func stroke(_ color: Int, _ build: (NSBezierPath) -> Void) {
             let p = NSBezierPath()
             p.lineWidth = 2
@@ -252,13 +259,18 @@ final class GraphCell: NSView {
             Theme.lane(color).setStroke()
             p.stroke()
         }
-        for e in row.through {
+        for e in row.through where e.from <= cap {
             stroke(e.color) { $0.move(to: NSPoint(x: x(e.from), y: 0)); $0.line(to: NSPoint(x: x(e.from), y: h)) }
         }
         for e in row.incoming {
             stroke(e.color) { p in
+                if e.from > cap, row.lane <= cap {
+                    p.move(to: NSPoint(x: x(e.to) + stub, y: mid * 0.4))
+                    p.line(to: NSPoint(x: x(e.to), y: mid))
+                    return
+                }
                 p.move(to: NSPoint(x: x(e.from), y: 0))
-                if e.from == e.to { p.line(to: NSPoint(x: x(e.to), y: mid)) } else {
+                if x(e.from) == x(e.to) { p.line(to: NSPoint(x: x(e.to), y: mid)) } else {
                     p.curve(to: NSPoint(x: x(e.to), y: mid), controlPoint1: NSPoint(x: x(e.from), y: mid * 0.8),
                             controlPoint2: NSPoint(x: x(e.to), y: mid * 0.4))
                 }
@@ -267,7 +279,11 @@ final class GraphCell: NSView {
         for e in row.outgoing {
             stroke(e.color) { p in
                 p.move(to: NSPoint(x: x(e.from), y: mid))
-                if e.from == e.to { p.line(to: NSPoint(x: x(e.to), y: h)) } else {
+                if e.to > cap, row.lane <= cap {
+                    p.line(to: NSPoint(x: x(e.from) + stub, y: mid + mid * 0.6))
+                    return
+                }
+                if x(e.from) == x(e.to) { p.line(to: NSPoint(x: x(e.to), y: h)) } else {
                     p.curve(to: NSPoint(x: x(e.to), y: h), controlPoint1: NSPoint(x: x(e.from), y: mid + mid * 0.6),
                             controlPoint2: NSPoint(x: x(e.to), y: mid + mid * 0.2))
                 }

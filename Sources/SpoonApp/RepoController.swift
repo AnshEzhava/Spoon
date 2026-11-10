@@ -10,13 +10,15 @@ struct HistoryFilter: Equatable {
     var scope: Scope = .all
     var hideRemotes = false
     var hideTags = false
+    var firstParent = false
 
     var arguments: [String] {
+        let flags = firstParent ? ["--first-parent"] : []
         switch scope {
-        case .current: return ["HEAD"]
-        case .refs(let refs): return refs
+        case .current: return flags + ["HEAD"]
+        case .refs(let refs): return flags + refs
         case .all:
-            var args = ["--exclude=refs/spoon/*", "--exclude=refs/stash"]
+            var args = flags + ["--exclude=refs/spoon/*", "--exclude=refs/stash"]
             if hideRemotes { args.append("--exclude=refs/remotes/*") }
             if hideTags { args.append("--exclude=refs/tags/*") }
             return args + ["--all"]
@@ -190,7 +192,7 @@ final class RepoController {
         historyError = nil
         onHistoryReset?()
         let generation = historyGeneration
-        let box = LayoutBox(mainTip: mainTip)
+        let box = LayoutBox(mainTip: mainTip, firstParentOnly: filter.firstParent)
         let order = AppModel.shared.settings.commitOrder
         let refs = filter.arguments
         let repo = self.repo
@@ -268,7 +270,7 @@ final class RepoController {
 private final class LayoutBox: @unchecked Sendable {
     private var layout: GraphLayout
     private let lock = NSLock()
-    init(mainTip: String?) { layout = GraphLayout(mainTip: mainTip) }
+    init(mainTip: String?, firstParentOnly: Bool) { layout = GraphLayout(mainTip: mainTip, firstParentOnly: firstParentOnly) }
     func layout(_ page: [Commit]) -> [GraphRow] {
         lock.withLock { page.map { layout.place($0) } }
     }

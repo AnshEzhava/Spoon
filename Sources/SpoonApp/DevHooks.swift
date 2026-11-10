@@ -4,9 +4,9 @@ import AppKit
 ///   snapshot <dir>      render every window to <dir>/window-N.png, current first (works off-screen)
 ///   menu <A ▸ B>        perform a menu item by title path
 ///   open <path>         open a repository
-///   file u:<path>       select a Local Changes file (u: unstaged, s: staged)
-///   lines a-b           select diff rows; stagelines stages/unstages them
-///   commit <subject>    commit staged changes; undo performs ⌘Z
+///   file <path>         select a Local Changes file
+///   lines a-b           toggle diff rows in/out of the next commit
+///   commit <subject>    commit the checked changes; undo performs ⌘Z
 ///   group <A/B>         show a group's dashboard; groupfetch / grouppull run it
 ///   return              press Return in the frontmost sheet
 ///   addexisting <path>  Add Existing Repository for <path>, skipping the folder picker
@@ -62,8 +62,10 @@ enum DevHooks {
         case "file":
             AppDelegate.shared.current?.repoController?.local.selection = [arg]
         case "lines":
+            // Toggle diff rows N-M in/out of the next commit.
+            guard let m = AppDelegate.shared.current?.repoController?.local, let d = m.diff else { return }
             let r = arg.split(separator: "-").compactMap { Int($0) }
-            AppDelegate.shared.current?.repoController?.local.lineSelection = IndexSet(integersIn: r[0]...r.last!)
+            m.toggleLines(DiffRows.build([d], sideBySide: AppModel.shared.settings.diffSideBySide, fileHeaders: false).lineRefs(IndexSet(integersIn: r[0]...r.last!)))
         case "group", "groupfetch", "grouppull":
             guard let g = AppModel.shared.library.group(named: arg) else { NSLog("Spoon dev: no group \(arg)"); return }
             parts[0] == "group" ? GroupActions.dashboard(g.id) : GroupActions.run(g.id, pull: parts[0] == "grouppull")
@@ -93,10 +95,6 @@ enum DevHooks {
             m.commit(push: false)
         case "undo":
             AppDelegate.shared.current?.repoController.map { RepoActions.undo($0) }
-        case "stagelines":
-            guard let m = AppDelegate.shared.current?.repoController?.local, let d = m.diff else { return }
-            m.applyLines(m.lineRefs(DiffRows.build([d], sideBySide: AppModel.shared.settings.diffSideBySide, fileHeaders: false), m.lineSelection),
-                         unstage: m.diffIsStaged)
         default:
             NSLog("Spoon dev: unknown command \(cmd)")
         }

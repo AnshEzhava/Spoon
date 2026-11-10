@@ -48,7 +48,7 @@ final class AppModel {
 
 /// Persisted preferences (§8). Human-readable JSON.
 struct Settings: Codable, Equatable {
-    var commitOrder: CommitOrder = .topo
+    var commitOrder: CommitOrder = .date
     var diffSideBySide = false
     var diffContext = 3
     var ignoreWhitespace = false

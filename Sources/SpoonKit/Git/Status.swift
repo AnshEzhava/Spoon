@@ -44,6 +44,11 @@ public struct RepoStatus: Sendable, Hashable {
     public var staged: [StatusEntry] { entries.filter(\.isStaged) }
     public var unstaged: [StatusEntry] { entries.filter(\.isUnstaged) }
     public var conflicts: [StatusEntry] { entries.filter { $0.kind == .unmerged } }
+    /// Changes vs HEAD with no staged/unstaged split, one entry per path.
+    public var changes: [StatusEntry] {
+        var seen = Set<String>()
+        return entries.filter { $0.kind != .ignored && $0.kind != .unmerged && seen.insert($0.path).inserted }
+    }
     public var isClean: Bool { entries.allSatisfy { $0.kind == .ignored } }
     /// Tracked changes only (untracked files don't block a pull).
     public var hasTrackedChanges: Bool { entries.contains { $0.kind != .untracked && $0.kind != .ignored } }

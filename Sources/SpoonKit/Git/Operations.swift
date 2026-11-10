@@ -98,7 +98,7 @@ extension Repository {
         if await hasHead {
             try await write(["reset", "-q", "HEAD", "--"] + paths)
         } else {
-            try await write(["rm", "--cached", "-r", "-q", "--"] + paths)
+            try await write(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--"] + paths)
         }
     }
 
@@ -157,6 +157,26 @@ extension Repository {
             try await self.write(commitArgs, input: Data(message.utf8), env: ["GIT_EDITOR": "true"], output: output)
         }
         return try await git.run(["rev-parse", "HEAD"], in: workTree).output.trimmingCharacters(in: .newlines)
+    }
+
+    /// Commit with no staging step: the index is rebuilt as every change minus `excluding`, `partial` files add only
+    /// their listed lines, then it commits. The working tree is never touched. `partial` diffs come from
+    /// `diffAgainstHead`/`diffUntracked` with `diffOptions`; if a file has changed since, nothing is committed.
+    @discardableResult
+    public func commitSelected(excluding: [String], partial: [(FileDiff, Set<LineRef>)], message: String,
+                               options: CommitOptions = .init(), diffOptions: DiffOptions = .init(),
+                               output: Output? = nil) async throws -> String {
+        for (file, _) in partial {
+            var fresh = try await diffAgainstHead(paths: [file.path], options: diffOptions).first
+            if fresh == nil { fresh = try await diffUntracked(file.path, options: diffOptions) }
+            guard fresh?.hunks == file.hunks else {
+                throw GitError(args: ["apply"], status: 1, stderr: "error: \(file.path) changed after its lines were picked. Review it and commit again.")
+            }
+        }
+        try await stageAll()
+        try await unstage(excluding + partial.map(\.0.path))
+        for (file, lines) in partial { try await applyPartial(file, lines: lines) }
+        return try await commit(message: message, options: options, output: output)
     }
 
     public func headMessage() async -> String {

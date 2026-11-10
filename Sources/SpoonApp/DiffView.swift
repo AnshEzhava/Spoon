@@ -13,7 +13,7 @@ struct DiffRow {
     var rightMarks: [NSRange] = []
     var file = 0
     var hunk = 0
-    /// Indices into hunk.lines of `left` / `right` (used by line staging).
+    /// Indices into hunk.lines of `left` / `right` (used to pick lines for a commit).
     var leftIndex: Int?
     var rightIndex: Int?
 }
@@ -109,6 +109,12 @@ final class DiffDocumentView: NSView {
     var font = Theme.codeFont { didSet { invalidateSize(); needsDisplay = true } }
     var selection: IndexSet = [] { didSet { needsDisplay = true; onSelectionChange?() } }
     var onSelectionChange: (() -> Void)?
+    /// When set, changed lines show a checkbox gutter and clicks toggle them via `onToggle` instead of selecting.
+    var included: Set<LineRef>? { didSet { if (included == nil) != (oldValue == nil) { invalidateSize() }; if included != oldValue { needsDisplay = true } } }
+    var onToggle: ((Set<LineRef>) -> Void)?
+    private var dragStart: Int?
+    /// Room for the include marks when they're shown.
+    private var lead: CGFloat { included == nil ? 0 : 22 }
     var searchQuery = "" { didSet { needsDisplay = true } }
     weak var delegate: DiffViewDelegate?
 
@@ -125,7 +131,7 @@ final class DiffDocumentView: NSView {
         charWidth = ("M" as NSString).size(withAttributes: [.font: font]).width
         let longest = sideBySide ? 0 : rows.lazy.map { ($0.left?.text.count ?? $0.text.count) }.max() ?? 0
         let textWidth = CGFloat(min(longest, DiffRows.maxLineLength) + 4) * charWidth
-        let width = max(enclosingScrollView?.contentSize.width ?? 400, sideBySide ? 0 : gutter * 2 + 18 + textWidth)
+        let width = max(enclosingScrollView?.contentSize.width ?? 400, sideBySide ? 0 : lead + gutter * 2 + 18 + textWidth)
         setFrameSize(NSSize(width: width, height: max(CGFloat(rows.count) * lineHeight, enclosingScrollView?.contentSize.height ?? 0)))
     }
 
@@ -164,16 +170,20 @@ final class DiffDocumentView: NSView {
                 draw(row.text, at: NSPoint(x: 8, y: y), attrs: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
             case .line:
                 if sideBySide {
-                    let half = bounds.width / 2
-                    drawSide(row.left, marks: row.leftMarks, x: 0, width: half, y: y, old: true, numberAttrs: numberAttrs)
-                    drawSide(row.right, marks: row.rightMarks, x: half, width: half, y: y, old: false, numberAttrs: numberAttrs)
-                    NSColor.separatorColor.setFill(); NSRect(x: half, y: y, width: 1, height: lineHeight).fill()
+                    let half = (bounds.width - lead) / 2
+                    drawSide(row.left, marks: row.leftMarks, x: lead, width: half, y: y, old: true, numberAttrs: numberAttrs)
+                    drawSide(row.right, marks: row.rightMarks, x: lead + half, width: half, y: y, old: false, numberAttrs: numberAttrs)
+                    NSColor.separatorColor.setFill(); NSRect(x: lead + half, y: y, width: 1, height: lineHeight).fill()
                 } else if let line = row.left {
                     background(line.kind).setFill(); rect.fill()
-                    if let n = line.oldLine { drawNumber(n, x: 0, y: y, attrs: numberAttrs) }
-                    if let n = line.newLine { drawNumber(n, x: gutter, y: y, attrs: numberAttrs) }
-                    drawText(line, marks: row.leftMarks, x: gutter * 2, y: y, clip: bounds.width)
+                    if let n = line.oldLine { drawNumber(n, x: lead, y: y, attrs: numberAttrs) }
+                    if let n = line.newLine { drawNumber(n, x: lead + gutter, y: y, attrs: numberAttrs) }
+                    drawText(line, marks: row.leftMarks, x: lead + gutter * 2, y: y, clip: bounds.width)
                 }
+            }
+            if let included, row.kind == .line {
+                let refs = rows.lineRefs(IndexSet(integer: i))
+                if !refs.isEmpty { drawCheck(on: refs.isSubset(of: included), mixed: !refs.isDisjoint(with: included) && !refs.isSubset(of: included), y: y) }
             }
             if selection.contains(i) {
                 NSColor.selectedContentBackgroundColor.withAlphaComponent(0.25).setFill()
@@ -181,6 +191,27 @@ final class DiffDocumentView: NSView {
                 NSColor.controlAccentColor.setFill()
                 NSRect(x: 0, y: y, width: 3, height: lineHeight).fill()
             }
+        }
+    }
+
+    /// Left-edge include mark: filled accent box when the line goes into the commit, empty outline when left out.
+    private func drawCheck(on: Bool, mixed: Bool, y: CGFloat) {
+        let box = NSRect(x: 4, y: y + (lineHeight - 12) / 2, width: 12, height: 12)
+        let path = NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3)
+        if on || mixed {
+            NSColor.controlAccentColor.setFill(); path.fill()
+            let mark = NSBezierPath()
+            if mixed {
+                mark.move(to: NSPoint(x: box.minX + 3, y: box.midY)); mark.line(to: NSPoint(x: box.maxX - 3, y: box.midY))
+            } else {
+                mark.move(to: NSPoint(x: box.minX + 2.5, y: box.midY)); mark.line(to: NSPoint(x: box.minX + 5, y: box.maxY - 3))
+                mark.line(to: NSPoint(x: box.maxX - 2.5, y: box.minY + 3))
+            }
+            mark.lineWidth = 1.6; mark.lineCapStyle = .round
+            NSColor.white.setStroke(); mark.stroke()
+        } else {
+            NSColor.textBackgroundColor.setFill(); path.fill()
+            NSColor.tertiaryLabelColor.setStroke(); path.lineWidth = 1; path.stroke()
         }
     }
 
@@ -277,6 +308,13 @@ final class DiffDocumentView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         guard let r = row(at: convert(event.locationInWindow, from: nil)) else { selection = []; return }
+        if included != nil, !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift) {
+            // Click a line or hunk header to toggle it in/out of the commit; drag to toggle a range on mouse-up.
+            dragStart = r
+            selection = rows[r].kind == .hunk ? hunkRows(r) : IndexSet(integer: r).filteredLines(rows)
+            return
+        }
+        dragStart = nil
         if event.modifierFlags.contains(.shift), let a = anchor {
             selection = IndexSet(integersIn: min(a, r)...max(a, r)).filteredLines(rows)
         } else if event.modifierFlags.contains(.command) {
@@ -290,7 +328,20 @@ final class DiffDocumentView: NSView {
         }
     }
 
+    override func mouseUp(with event: NSEvent) {
+        guard dragStart != nil else { return }
+        dragStart = nil
+        let refs = rows.lineRefs(selection)
+        selection = []
+        if !refs.isEmpty { onToggle?(refs) }
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        if let a = dragStart, let r = row(at: convert(event.locationInWindow, from: nil)) {
+            selection = IndexSet(integersIn: min(a, r)...max(a, r)).filteredLines(rows)
+            autoscroll(with: event)
+            return
+        }
         guard let a = anchor, let r = row(at: convert(event.locationInWindow, from: nil)) else { return }
         selection = IndexSet(integersIn: min(a, r)...max(a, r)).filteredLines(rows)
         autoscroll(with: event)
@@ -358,8 +409,22 @@ final class DiffDocumentView: NSView {
     }
 }
 
+extension Array where Element == DiffRow {
+    /// Row indices → refs to the changed lines in them.
+    func lineRefs(_ indices: IndexSet) -> Set<LineRef> {
+        var refs = Set<LineRef>()
+        for i in indices where i < count {
+            let r = self[i]
+            for (line, idx) in [(r.left, r.leftIndex), (r.right, r.rightIndex)] {
+                if let line, let idx, line.kind == .added || line.kind == .deleted { refs.insert(LineRef(hunk: r.hunk, line: idx)) }
+            }
+        }
+        return refs
+    }
+}
+
 extension IndexSet {
-    /// Only changed lines can be staged; context and headers are dropped from a selection.
+    /// Only changed lines can be picked; context and headers are dropped from a selection.
     func filteredLines(_ rows: [DiffRow]) -> IndexSet {
         IndexSet(filter { i in
             let r = rows[i]
@@ -380,7 +445,8 @@ struct DiffTextView: NSViewRepresentable {
     var jump: Int = 0
     var onSelection: ((IndexSet) -> Void)?
     weak var menuDelegate: DiffViewDelegate?
-    var selectionBinding: Binding<IndexSet>?
+    var included: Set<LineRef>?
+    var onToggle: ((Set<LineRef>) -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -403,8 +469,9 @@ struct DiffTextView: NSViewRepresentable {
         doc.onSelectionChange = { [weak doc] in
             guard let doc else { return }
             onSelection?(doc.selection)
-            selectionBinding?.wrappedValue = doc.selection
         }
+        doc.onToggle = onToggle
+        doc.included = included
         if c.lastToken != scrollToken || c.rowCount != rows.count {
             c.lastToken = scrollToken
             c.rowCount = rows.count
@@ -418,7 +485,6 @@ struct DiffTextView: NSViewRepresentable {
         if doc.sideBySide != sideBySide { doc.sideBySide = sideBySide }
         if doc.showInvisibles != showInvisibles { doc.showInvisibles = showInvisibles }
         if doc.searchQuery != search { doc.searchQuery = search }
-        if let sel = selectionBinding?.wrappedValue, sel != doc.selection { doc.selection = sel }
         if c.lastJump != jump {
             doc.jumpToChange(forward: jump > c.lastJump)
             c.lastJump = jump

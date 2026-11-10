@@ -151,6 +151,7 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
     }
     @objc func toggleHideRemotes(_ sender: Any?) { repoController?.filter.hideRemotes.toggle() }
     @objc func toggleHideTags(_ sender: Any?) { repoController?.filter.hideTags.toggle() }
+    @objc func toggleFirstParent(_ sender: Any?) { repoController?.filter.firstParent.toggle() }
     @objc func toggleRepoSidebar(_ sender: Any?) { repoVC?.toggleSidebar(sender) }
     @objc func toggleDetails(_ sender: Any?) { repoVC?.toggleDetails() }
     @objc func toggleLayout(_ sender: Any?) {
@@ -175,7 +176,7 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let repoOnly: Set<Selector> = [
             #selector(showLocalChanges), #selector(showAllCommits), #selector(performFind), #selector(toggleCurrentBranchOnly),
-            #selector(toggleHideRemotes), #selector(toggleHideTags), #selector(toggleRepoSidebar), #selector(toggleDetails),
+            #selector(toggleHideRemotes), #selector(toggleHideTags), #selector(toggleFirstParent), #selector(toggleRepoSidebar), #selector(toggleDetails),
             #selector(detailsCommit), #selector(detailsChanges), #selector(detailsTree), #selector(revealHead),
             #selector(showInFinder), #selector(openInTerminal), #selector(openInEditor), #selector(copyRepoPath),
         ]
@@ -185,6 +186,7 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
             case #selector(toggleCurrentBranchOnly): item.state = c.filter.scope == .current ? .on : .off
             case #selector(toggleHideRemotes): item.state = c.filter.hideRemotes ? .on : .off
             case #selector(toggleHideTags): item.state = c.filter.hideTags ? .on : .off
+            case #selector(toggleFirstParent): item.state = c.filter.firstParent ? .on : .off
             default: break
             }
             return RepoActions.validate(action, c)
