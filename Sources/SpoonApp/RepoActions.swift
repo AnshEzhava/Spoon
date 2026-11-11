@@ -26,21 +26,6 @@ enum RepoActions {
         }
     }
 
-    /// Button tooltips show exactly what will run (§5.3).
-    static func tooltip(_ label: String, _ c: RepoController) -> String {
-        let up = c.upstream
-        switch label {
-        case "Fetch": return "git fetch --prune --all  (⌥-click: quick fetch)"
-        case "Pull":
-            guard let up, let r = up.remoteName else { return "Pull (no upstream)" }
-            return "git pull \(c.defaultPullStrategy.flag) \(r) \(up.shortName.dropFirst(r.count + 1))  (⌥-click: quick pull)"
-        case "Push":
-            guard let b = c.currentBranch else { return "Push" }
-            return "git push \(up?.remoteName ?? c.remotes.first?.name ?? "origin") \(b)  (⌥-click: quick push)"
-        default: return label
-        }
-    }
-
     // MARK: Network
 
     static func quickFetch(_ c: RepoController?) {
@@ -71,7 +56,7 @@ enum RepoActions {
     static func quickPush(_ c: RepoController?) {
         guard let c, let branch = c.currentBranch else { return }
         let up = c.upstream
-        let remote = up?.remoteName ?? c.remotes.first?.name
+        let remote = up?.remoteName ?? c.preferredRemote
         guard let remote else { pushDialog(c); return }
         let remoteBranch = up.map { String($0.shortName.dropFirst(remote.count + 1)) } ?? branch
         c.perform("Push \(branch)", context: .push) { repo, out in
@@ -113,10 +98,6 @@ enum RepoActions {
         c.perform("Checkout \(sha.prefix(7))", context: .checkout(retry: { m in
             c.perform("Checkout \(sha.prefix(7))") { repo, _ in try await repo.checkoutDetached(sha, localChanges: m) }
         })) { repo, _ in try await repo.checkoutDetached(sha) }
-    }
-
-    static func checkoutPicker(_ c: RepoController) {
-        Sheets.present(CheckoutPicker(controller: c), on: c.window)
     }
 
     static func rename(_ c: RepoController, _ ref: Ref) {
@@ -285,7 +266,7 @@ extension TabWindowController {
     @objc func quickPushAction(_ s: Any?) { RepoActions.quickPush(repoController) }
     @objc func stashAction(_ s: Any?) { repoController.map { RepoActions.stashDialog($0) } }
     @objc func quickStashAction(_ s: Any?) { repoController.map(RepoActions.quickStash) }
-    @objc func checkoutAction(_ s: Any?) { repoController.map(RepoActions.checkoutPicker) }
+    @objc func checkoutAction(_ s: Any?) { repoController?.branchPickerShown.toggle() }
     @objc func newBranchAction(_ s: Any?) { RepoActions.newBranch(repoController, at: nil) }
     @objc func newTagAction(_ s: Any?) { repoController.map { RepoActions.newTag($0, at: nil) } }
     @objc func mergeAction(_ s: Any?) { repoController.map { HistoryActions.mergeDialog($0, ref: nil) } }

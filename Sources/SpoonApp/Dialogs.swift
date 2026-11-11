@@ -264,66 +264,6 @@ struct NewBranchDialog: View {
     }
 }
 
-/// ⌘B: fuzzy picker over local and remote branches, recent first (§5.13).
-struct CheckoutPicker: View {
-    let controller: RepoController
-    @State private var query = ""
-    @State private var selected = 0
-    @State private var mode: LocalChangesMode = .keep
-    @Environment(\.dismissSheet) private var dismiss
-
-    var results: [Ref] {
-        let all = controller.localBranches.sorted { $0.date > $1.date } + controller.remoteBranches.sorted { $0.date > $1.date }
-        guard !query.isEmpty else { return all }
-        return all.compactMap { r in Fuzzy.score(r.shortName, query).map { (r, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
-    }
-
-    var body: some View {
-        let list = results
-        VStack(spacing: 0) {
-            TextField("Checkout branch…", text: $query)
-                .textFieldStyle(.plain).font(.system(size: 16)).padding(12)
-                .onSubmit { run(list) }
-                .onKeyPress(.downArrow) { selected = min(selected + 1, list.count - 1); return .handled }
-                .onKeyPress(.upArrow) { selected = max(selected - 1, 0); return .handled }
-                .onKeyPress(.escape) { dismiss(); return .handled }
-            Divider()
-            ScrollViewReader { proxy in
-                List(Array(list.enumerated()), id: \.element.id) { i, r in
-                    HStack {
-                        Image(systemName: r.kind == .remoteBranch ? "cloud" : r.isHead ? "checkmark" : "arrow.triangle.branch").frame(width: 16)
-                        Text(r.shortName)
-                        Spacer()
-                        Text(Format.age(Date(timeIntervalSince1970: TimeInterval(r.date)))).font(.caption).foregroundStyle(.secondary)
-                    }
-                    .id(i)
-                    .listRowBackground(i == selected ? Color.accentColor.opacity(0.25) : .clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selected = i; run(list) }
-                }
-                .onChange(of: selected) { _, i in proxy.scrollTo(i) }
-            }
-            Divider()
-            HStack {
-                Picker("Local changes", selection: $mode) { ForEach(LocalChangesMode.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .fixedSize()
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Checkout") { run(list) }.keyboardShortcut(.defaultAction)
-            }
-            .padding(10)
-        }
-        .frame(width: 480, height: 420)
-        .onChange(of: query) { _, _ in selected = 0 }
-    }
-
-    func run(_ list: [Ref]) {
-        guard selected < list.count else { return }
-        dismiss()
-        RepoActions.checkout(controller, ref: list[selected], mode: mode)
-    }
-}
-
 struct RenameBranchDialog: View {
     let controller: RepoController
     let ref: Ref

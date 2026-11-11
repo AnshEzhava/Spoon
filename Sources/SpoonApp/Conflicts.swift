@@ -351,33 +351,86 @@ struct MergeEditor: View {
 
 // MARK: Dialogs
 
+/// GitHub Desktop-style merge: pick a branch, see what will happen, merge.
 struct MergeDialog: View {
     let controller: RepoController
-    let ref: String
+    @State var ref: String?
+    @State private var query = ""
     @State private var type = MergeType.default
-    @State private var message = ""
-    @State private var prediction = ""
+    @State private var incoming: Int?
+    @State private var conflicts: [String]?
+    @Environment(\.dismissSheet) private var dismiss
 
     var body: some View {
         let into = controller.currentBranch ?? "HEAD"
-        Dialog(title: "Merge", subtitle: "Merge \(ref) into \(into).",
-               command: "git merge " + (type == .default ? "" : "--\(type.rawValue) ") + ref,
-               action: "Merge", onConfirm: run) {
-            LabeledContent("Merge:") { Text(ref).font(.system(.body, design: .monospaced)) }
-            LabeledContent("Into:") { Text(into).font(.system(.body, design: .monospaced)) }
-            Picker("Type:", selection: $type) { ForEach(MergeType.allCases, id: \.self) { Text($0.title).tag($0) } }
-                .pickerStyle(.radioGroup)
-            if type != .ffOnly && type != .squash {
-                TextField("Message:", text: $message, prompt: Text("Merge branch '\(ref)'"), axis: .vertical).lineLimit(1...4)
+        let localNames = Set(controller.localBranches.map(\.shortName))
+        let remotes = controller.remoteBranches.filter { !localNames.contains(String($0.shortName.dropFirst(($0.remoteName?.count ?? -1) + 1))) }
+        let names = (controller.localBranches.filter { !$0.isHead }.sorted { $0.date > $1.date }
+                     + remotes.sorted { $0.date > $1.date }).map(\.shortName)
+            .filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Merge into \(into)").font(.system(size: 15, weight: .bold))
+            Text("Choose the branch whose commits you want to bring into \(into).")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+            TextField("Filter branches", text: $query).textFieldStyle(.roundedBorder)
+            List(names, id: \.self, selection: $ref) { name in
+                Label(name, systemImage: name.contains("/") && controller.remoteBranches.contains { $0.shortName == name } ? "cloud" : "arrow.triangle.branch")
             }
-            if !prediction.isEmpty { LabeledContent("") { Text(prediction).font(.system(size: 11)) } }
+            .frame(height: 220)
+            preview(into)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            DisclosureGroup("Options") {
+                Picker("", selection: $type) { ForEach(MergeType.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    .pickerStyle(.radioGroup).labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.system(size: 12))
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(ref.map { "Merge \($0) into \(into)" } ?? "Merge") { run() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(ref == nil || incoming == 0)
+            }
         }
-        .task { prediction = await HistoryActions.predictConflicts(controller, ours: "HEAD", theirs: ref) }
+        .padding(20)
+        .frame(width: 460)
+        .task(id: ref) { await load() }
+    }
+
+    @ViewBuilder func preview(_ into: String) -> some View {
+        if let ref {
+            if let incoming, incoming == 0 {
+                Label("\(into) already has every commit from \(ref).", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            } else if let conflicts, !conflicts.isEmpty {
+                Label("\(conflicts.count) file\(conflicts.count == 1 ? "" : "s") will conflict: \(conflicts.prefix(3).joined(separator: ", "))\(conflicts.count > 3 ? "…" : ""). You'll resolve them before the merge is finished.",
+                      systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            } else if let incoming {
+                Label("This will bring \(incoming) commit\(incoming == 1 ? "" : "s") from \(ref) into \(into). No conflicts.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        } else {
+            Text("Select a branch.").foregroundStyle(.secondary)
+        }
+    }
+
+    func load() async {
+        incoming = nil
+        conflicts = nil
+        guard let ref else { return }
+        let r = try? await controller.git.run(["rev-list", "--count", "HEAD..\(ref)"], in: controller.repo.workTree, background: true)
+        incoming = Int(r?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        conflicts = await controller.repo.predictConflicts(ours: "HEAD", theirs: ref)
     }
 
     func run() {
-        let r = ref, t = type, m = message
-        controller.rewrite("Merge \(r)") { try await $0.merge(r, type: t, message: m.isEmpty ? nil : m) }
+        guard let r = ref else { return }
+        let t = type
+        dismiss()
+        controller.rewrite("Merge \(r)") { try await $0.merge(r, type: t) }
     }
 }
 

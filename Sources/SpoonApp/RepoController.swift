@@ -64,6 +64,10 @@ final class RepoController {
     var worktrees: [Worktree] = []
     var submodules: [Submodule] = []
     var focusCommitToken = 0
+    /// ⌘B and the toolbar branch control share one popover.
+    var branchPickerShown = false
+    /// `FETCH_HEAD` mtime: the last fetch or pull.
+    var lastFetched: Date?
     /// `pull.rebase` / `pull.ff` value, for the default pull strategy.
     var pullConfig = ""
 
@@ -87,6 +91,8 @@ final class RepoController {
     var remoteBranches: [Ref] { refs.filter { $0.kind == .remoteBranch } }
     var tags: [Ref] { refs.filter { $0.kind == .tag } }
     var changeCount: Int { status.entries.filter { $0.kind != .ignored }.count }
+    /// `origin` when it exists, else the first remote.
+    var preferredRemote: String? { remotes.first { $0.name == "origin" }?.name ?? remotes.first?.name }
     var upstream: Ref? {
         guard let up = headRef?.upstream else { return nil }
         return refs.first { $0.name == up }
@@ -149,6 +155,7 @@ final class RepoController {
                     apply(refs: refs)
                     self.stashes = stashes
                     self.remotes = remotes
+                    lastFetched = try? FileManager.default.attributesOfItem(atPath: repo.commonDir.appendingPathComponent("FETCH_HEAD").path)[.modificationDate] as? Date
                 }
                 let status = try await s
                 guard !Task.isCancelled else { return }

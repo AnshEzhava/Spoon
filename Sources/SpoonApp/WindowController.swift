@@ -37,7 +37,7 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         super.init(window: window)
         window.delegate = self
         // Bump when default items change: an autosaved layout never picks up new defaults.
-        let toolbar = NSToolbar(identifier: "main.2")
+        let toolbar = NSToolbar(identifier: "main.3")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -196,9 +196,9 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         return true
     }
 
-    // MARK: Toolbar (§5.3)
+    // MARK: Toolbar (§5.3): GitHub Desktop-style repository, branch and sync controls.
 
-    static let itemIDs: [NSToolbarItem.Identifier] = [.back, .quickLaunch, .fetch, .pull, .push, .stash, .flexibleSpace, .status, .flexibleSpace, .newBranch, .openIn]
+    static let itemIDs: [NSToolbarItem.Identifier] = [.repository, .branch, .sync, .flexibleSpace]
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { Self.itemIDs }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -215,153 +215,277 @@ final class TabWindowController: NSWindowController, NSWindowDelegate, NSToolbar
             return item
         }
         switch id {
-        case .back: return host(ToolbarButton(symbol: "chevron.left", label: "Back", window: m, requiresRepo: true) { [weak self] _ in self?.showHome() }, "Back")
-        case .quickLaunch: return host(ToolbarButton(symbol: "magnifyingglass", label: "Quick Launch", window: m) { _ in AppDelegate.shared.showQuickLaunch(nil) }, "Quick Launch")
-        case .fetch: return host(ToolbarButton(symbol: "arrow.down.circle", label: "Fetch", window: m, requiresRepo: true) { c in
-            NSEvent.modifierFlags.contains(.option) ? RepoActions.quickFetch(c) : RepoActions.fetchDialog(c) }, "Fetch")
-        case .pull: return host(ToolbarButton(symbol: "arrow.down.to.line", label: "Pull", window: m, requiresRepo: true, badge: { "\($0.headRef?.behind ?? 0)" }) { c in
-            NSEvent.modifierFlags.contains(.option) ? RepoActions.quickPull(c) : RepoActions.pullDialog(c) }, "Pull")
-        case .push: return host(ToolbarButton(symbol: "arrow.up.to.line", label: "Push", window: m, requiresRepo: true, badge: { "\($0.headRef?.ahead ?? 0)" }) { c in
-            NSEvent.modifierFlags.contains(.option) ? RepoActions.quickPush(c) : RepoActions.pushDialog(c) }, "Push")
-        case .stash: return host(StashToolbarMenu(window: m), "Stash")
-        case .status: return host(StatusControl(window: m), "Repository")
-        case .newBranch: return host(ToolbarButton(symbol: "arrow.triangle.branch", label: "New Branch", window: m, requiresRepo: true) { c in
-            RepoActions.newBranch(c, at: nil) }, "New Branch")
-        case .openIn: return host(OpenInMenu(window: m), "Open in")
-        case .refresh: return host(ToolbarButton(symbol: "arrow.clockwise", label: "Refresh", window: m) { [weak self] _ in self?.refresh(nil) }, "Refresh")
-        case .activity: return host(ToolbarButton(symbol: "list.bullet.rectangle", label: "Activity", window: m) { _ in AppDelegate.shared.showActivity(nil) }, "Activity")
+        case .repository: return host(RepositoryControl(window: m), "Current Repository")
+        case .branch: return host(BranchControl(window: m), "Current Branch")
+        case .sync: return host(SyncControl(window: m), "Sync")
+        case .refresh: return host(Button { [weak self] in self?.refresh(nil) } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless), "Refresh")
+        case .activity: return host(Button { AppDelegate.shared.showActivity(nil) } label: { Image(systemName: "list.bullet.rectangle") }.buttonStyle(.borderless), "Activity")
         default: return nil
         }
     }
 }
 
 extension NSToolbarItem.Identifier {
-    static let quickLaunch = Self("quickLaunch"), fetch = Self("fetch"), pull = Self("pull"), push = Self("push")
-    static let stash = Self("stash"), status = Self("status"), newBranch = Self("newBranch"), openIn = Self("openIn")
-    static let refresh = Self("refresh"), activity = Self("activity"), back = Self("back")
+    static let repository = Self("repository"), branch = Self("branch"), sync = Self("sync")
+    static let refresh = Self("refresh"), activity = Self("activity")
 }
 
-struct ToolbarButton: View {
-    let symbol: String
-    let label: String
-    let window: WindowModel
-    var requiresRepo = false
-    var badge: ((RepoController) -> String)? = nil
-    let action: (RepoController?) -> Void
-
-    var body: some View {
-        Button { action(window.repo) } label: {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: symbol).frame(width: 28, height: 22)
-                if let c = window.repo, let b = badge?(c), b != "0" {
-                    Text(b).font(.system(size: 9, weight: .bold).monospacedDigit()).foregroundStyle(.white)
-                        .padding(.horizontal, 3).background(Capsule().fill(Color.accentColor)).offset(x: 4, y: -3)
-                }
-            }
-        }
-        .buttonStyle(.borderless)
-        .disabled(requiresRepo && window.repo == nil)
-        .help(window.repo.map { RepoActions.tooltip(label, $0) } ?? label)
-        .accessibilityLabel(label)
-    }
-}
-
-/// Repo name, branch popup and ↑↓, plus running-operation progress (§5.3).
-struct StatusControl: View {
-    let window: WindowModel
-    private var activity: ActivityLog { AppModel.shared.activity }
+/// Two-line toolbar control label: small caption over a bold value (or bold title over a caption).
+struct ToolbarLabel: View {
+    var icon: String?
+    let top: String
+    let bottom: String
+    var titleOnTop = false
+    var chevron = true
+    var badge: String?
 
     var body: some View {
         HStack(spacing: 8) {
-            Button { AppDelegate.shared.showActivity(nil) } label: {
-                Image(systemName: activity.operations.first(where: { $0.repo == window.repo?.repo.workTree.path })?.failed == true
-                      ? "exclamationmark.circle" : "line.3.horizontal")
+            if let icon { Image(systemName: icon).font(.system(size: 14)).frame(width: 18) } else { ProgressView().controlSize(.small).frame(width: 18) }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(top).font(titleOnTop ? .system(size: 12, weight: .semibold) : .system(size: 10)).foregroundStyle(titleOnTop ? .primary : .secondary)
+                Text(bottom).font(titleOnTop ? .system(size: 10) : .system(size: 12, weight: .semibold)).foregroundStyle(titleOnTop ? .secondary : .primary)
             }
-            .buttonStyle(.borderless)
-            .help("Activity")
-            if let c = window.repo {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(c.name).font(.system(size: 12, weight: .bold)).lineLimit(1)
-                    if let busy = c.busy {
-                        HStack(spacing: 4) {
-                            ProgressView().controlSize(.mini)
-                            Text(busy).font(.system(size: 11)).lineLimit(1).foregroundStyle(.secondary)
-                        }
-                    } else {
-                        BranchPopup(controller: c)
-                    }
-                }
-                Spacer(minLength: 4)
-                if let h = c.headRef, h.upstream != nil {
-                    Text("↑\(h.ahead) ↓\(h.behind)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Welcome to Spoon — Open or clone a repository").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
+            .lineLimit(1)
+            Spacer(minLength: 4)
+            if let badge {
+                Text(badge).font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.accentColor))
             }
+            if chevron { Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
         }
         .padding(.horizontal, 8)
-        .frame(minWidth: 260, idealWidth: 340, maxWidth: 420, minHeight: 34)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.quaternary.opacity(0.6)))
+        .frame(width: 200, height: 34, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
-struct BranchPopup: View {
-    let controller: RepoController
+struct RepositoryControl: View {
+    let window: WindowModel
+    @State private var shown = false
+
     var body: some View {
-        Menu {
-            Section("Local") {
-                ForEach(controller.localBranches) { r in
-                    Button { RepoActions.checkout(controller, ref: r) } label: { Text(r.isHead ? "✓ \(r.shortName)" : r.shortName) }
+        Button { shown.toggle() } label: {
+            ToolbarLabel(icon: "book.closed", top: "Current Repository", bottom: window.repo?.name ?? "Choose a repository")
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $shown, arrowEdge: .bottom) { RepositoryPicker(window: window, shown: $shown) }
+    }
+}
+
+struct RepositoryPicker: View {
+    let window: WindowModel
+    @Binding var shown: Bool
+    @State private var query = ""
+
+    var body: some View {
+        let repos = AppModel.shared.library.repositories
+            .filter { $0.exists && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
+            .sorted { ($0.lastOpened ?? .distantPast) > ($1.lastOpened ?? .distantPast) }
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Filter", text: $query).textFieldStyle(.roundedBorder)
+                    .onSubmit { if let r = repos.first { open(r.path) } }
+                Menu("Add") {
+                    Button("Add Existing Repository…") { send(#selector(AppDelegate.addExistingRepository(_:))) }
+                    Button("Clone Repository…") { send(#selector(AppDelegate.cloneRepository(_:))) }
+                    Button("New Repository…") { send(#selector(AppDelegate.initRepository(_:))) }
+                }
+                .fixedSize()
+            }
+            .padding(10)
+            List(repos) { r in
+                Button { open(r.path) } label: {
+                    HStack {
+                        Image(systemName: "book.closed").foregroundStyle(.secondary)
+                        Text(r.name).fontWeight(r.path == window.repo?.repo.workTree.path ? .semibold : .regular)
+                        Spacer()
+                        if r.path == window.repo?.repo.workTree.path { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            Divider()
+            Button("Show All Repositories") { shown = false; send(#selector(TabWindowController.showHomeTab(_:))) }
+                .buttonStyle(.borderless).padding(8)
+        }
+        .frame(width: 320, height: 360)
+    }
+
+    func open(_ path: String) { shown = false; AppDelegate.shared.openRepo(path: path) }
+    func send(_ action: Selector) { shown = false; NSApp.sendAction(action, to: nil, from: nil) }
+}
+
+struct BranchControl: View {
+    let window: WindowModel
+
+    var body: some View {
+        if let c = window.repo {
+            @Bindable var c = c
+            Button { c.branchPickerShown.toggle() } label: {
+                ToolbarLabel(icon: "arrow.triangle.branch", top: c.currentBranch == nil ? "Detached HEAD" : "Current Branch",
+                             bottom: c.currentBranch ?? String(c.headSHA?.prefix(7) ?? ""))
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $c.branchPickerShown, arrowEdge: .bottom) { BranchPicker(controller: c) }
+        }
+    }
+}
+
+/// Switch (one click), create, and merge branches (BR-01).
+struct BranchPicker: View {
+    let controller: RepoController
+    @State private var query = ""
+
+    var body: some View {
+        let c = controller
+        let match: (Ref) -> Bool = { query.isEmpty || $0.shortName.localizedCaseInsensitiveContains(query) }
+        let locals = c.localBranches.filter(match).sorted { $0.isHead != $1.isHead ? $0.isHead : $0.date > $1.date }
+        // Remote branches that already have a local branch are reached through it.
+        let localNames = Set(c.localBranches.map(\.shortName))
+        let remotes = c.remoteBranches.filter { r in
+            match(r) && !localNames.contains(String(r.shortName.dropFirst((r.remoteName?.count ?? -1) + 1)))
+        }.sorted { $0.date > $1.date }
+        VStack(spacing: 0) {
+            TextField("Filter branches", text: $query).textFieldStyle(.roundedBorder).padding(10)
+                .onSubmit { if let r = (locals.filter { !$0.isHead } + remotes).first { pick(r) } }
+            List {
+                Section("Branches") { ForEach(locals) { row($0) } }
+                if !remotes.isEmpty { Section("Remote branches") { ForEach(remotes) { row($0) } } }
+            }
+            .listStyle(.plain)
+            Divider()
+            HStack {
+                Button { c.branchPickerShown = false; RepoActions.newBranch(c, at: nil) } label: { Label("New Branch…", systemImage: "plus") }
+                Spacer()
+                if let current = c.currentBranch {
+                    Button("Merge into \(current)…") { c.branchPickerShown = false; HistoryActions.mergeDialog(c, ref: nil) }
+                        .help("Bring the commits from another branch into \(current)")
                 }
             }
-            Section("Remote") {
-                ForEach(controller.remoteBranches) { r in Button(r.shortName) { RepoActions.checkout(controller, ref: r) } }
-            }
-            Divider()
-            Button("Checkout… (⌘B)") { RepoActions.checkoutPicker(controller) }
-        } label: {
-            Text("⎇ \(controller.currentBranch ?? "detached \(controller.headSHA?.prefix(7) ?? "")")").font(.system(size: 11))
+            .buttonStyle(.borderless)
+            .padding(10)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .frame(width: 360, height: 440)
+    }
+
+    func row(_ r: Ref) -> some View {
+        Button { pick(r) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: r.isHead ? "checkmark" : r.kind == .remoteBranch ? "cloud" : "arrow.triangle.branch")
+                    .frame(width: 16).foregroundStyle(r.isHead ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                Text(r.shortName).fontWeight(r.isHead ? .semibold : .regular).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Group {
+                    if r.ahead > 0 { Text("↑\(r.ahead)") }
+                    if r.behind > 0 { Text("↓\(r.behind)") }
+                    Text(Format.age(Date(timeIntervalSince1970: TimeInterval(r.date))))
+                }
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(r.isHead ? "Current branch" : "Switch to \(r.shortName)")
+        .contextMenu { RefMenu(controller: controller, ref: r) }
+    }
+
+    func pick(_ r: Ref) {
+        controller.branchPickerShown = false
+        RepoActions.checkout(controller, ref: r)
     }
 }
 
-struct StashToolbarMenu: View {
+/// One button that does the next sensible network step, like GitHub Desktop's "Fetch origin".
+struct SyncControl: View {
     let window: WindowModel
-    var body: some View {
-        Menu {
-            if let c = window.repo {
-                Button("Save Stash…") { RepoActions.stashDialog(c) }
-                Button("Quick Stash") { RepoActions.quickStash(c) }
-                Button("Pop Latest") { if let s = c.stashes.first { RepoActions.applyStash(c, s, pop: true) } }
-                    .disabled(c.stashes.isEmpty)
-            }
-        } label: { Image(systemName: "archivebox") }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(window.repo == nil)
-        .help("Stash")
-    }
-}
 
-struct OpenInMenu: View {
-    let window: WindowModel
+    enum Step { case publishRepo, publishBranch, pull(Int), push(Int), fetch }
+
     var body: some View {
-        Menu {
-            if let c = window.repo {
-                Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([c.repo.workTree]) }
-                Button("Terminal") { External.openTerminal(c.repo.workTree) }
-                Button("Editor") { External.openEditor(c.repo.workTree) }
-                if let url = c.remotes.first?.webURL { Button("Browser") { NSWorkspace.shared.open(url) } }
+        if let c = window.repo {
+            let step = Self.step(c)
+            let remote = c.upstream?.remoteName ?? c.preferredRemote ?? "origin"
+            HStack(spacing: 0) {
+                Button { run(step, c) } label: {
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        ToolbarLabel(icon: c.busy != nil ? nil : icon(step), top: title(step, remote),
+                                     bottom: c.busy ?? caption(step, c, remote), titleOnTop: true, chevron: false, badge: badge(step))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(c.busy != nil)
+                Menu {
+                    Button("Fetch") { RepoActions.quickFetch(c) }
+                    Button("Pull…") { RepoActions.pullDialog(c) }
+                    Button("Push…") { RepoActions.pushDialog(c) }
+                    Button("Force Push…") { RepoActions.pushDialog(c, force: true) }.disabled(c.remotes.isEmpty)
+                } label: { Image(systemName: "chevron.down") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .padding(.trailing, 6)
+                .help("More sync options")
             }
-        } label: { Image(systemName: "arrow.up.forward.app") }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(window.repo == nil)
-        .help("Open in")
+        }
     }
+
+    static func step(_ c: RepoController) -> Step {
+        if c.remotes.isEmpty { return .publishRepo }
+        guard let head = c.headRef else { return .fetch }
+        if head.upstream == nil || head.upstreamGone { return .publishBranch }
+        if head.behind > 0 { return .pull(head.behind) }
+        if head.ahead > 0 { return .push(head.ahead) }
+        return .fetch
+    }
+
+    func title(_ s: Step, _ remote: String) -> String {
+        switch s {
+        case .publishRepo: "Publish repository"
+        case .publishBranch: "Publish branch"
+        case .pull: "Pull \(remote)"
+        case .push: "Push \(remote)"
+        case .fetch: "Fetch \(remote)"
+        }
+    }
+
+    func caption(_ s: Step, _ c: RepoController, _ remote: String) -> String {
+        switch s {
+        case .publishRepo: return "Put this repository on GitHub"
+        case .publishBranch: return "Share this branch on \(remote)"
+        default:
+            guard let d = c.lastFetched else { return "Never fetched" }
+            return Date().timeIntervalSince(d) < 60 ? "Last fetched just now" : "Last fetched " + Self.relative.localizedString(for: d, relativeTo: Date())
+        }
+    }
+
+    func icon(_ s: Step) -> String {
+        switch s {
+        case .publishRepo, .publishBranch: "icloud.and.arrow.up"
+        case .pull: "arrow.down"
+        case .push: "arrow.up"
+        case .fetch: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    func badge(_ s: Step) -> String? {
+        switch s {
+        case .pull(let n): "\(n)↓"
+        case .push(let n): "\(n)↑"
+        default: nil
+        }
+    }
+
+    func run(_ s: Step, _ c: RepoController) {
+        switch s {
+        case .publishRepo: RepoActions.publish(c)
+        case .publishBranch, .push: RepoActions.quickPush(c)
+        case .pull: RepoActions.quickPull(c)
+        case .fetch: RepoActions.quickFetch(c)
+        }
+    }
+
+    static let relative: RelativeDateTimeFormatter = { let f = RelativeDateTimeFormatter(); f.unitsStyle = .full; return f }()
 }
 
 /// Sidebar | content, where content is History (list over details) or Local Changes.

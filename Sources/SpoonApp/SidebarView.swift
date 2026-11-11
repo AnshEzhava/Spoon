@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import SpoonKit
 
-/// Repository sidebar (§5.6): views, then collapsible ref sections with `/` folders.
+/// Repository sidebar (§5.6): views, then tags, stashes and worktrees. Branches live in the toolbar branch control.
 struct SidebarView: View {
     @Bindable var controller: RepoController
     @State private var filter = ""
@@ -18,11 +18,6 @@ struct SidebarView: View {
                 }
                 if let op = controller.operation {
                     Section { Label("\(op.title) in progress", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
-                }
-                section("Branches", "BRANCHES", refs: controller.localBranches, prefix: "refs/heads/")
-                ForEach(remoteNames, id: \.self) { remote in
-                    section(remote, "REMOTE \(remote)", refs: controller.remoteBranches.filter { $0.remoteName == remote },
-                            prefix: "refs/remotes/\(remote)/", icon: "cloud")
                 }
                 section("Tags", "TAGS", refs: controller.tags.sorted { $0.date > $1.date }, prefix: "refs/tags/", icon: "tag")
                 if !controller.stashes.isEmpty {
@@ -50,13 +45,6 @@ struct SidebarView: View {
             Divider()
             TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).padding(6)
         }
-    }
-
-    var remoteNames: [String] {
-        var seen: [String] = []
-        for r in controller.remoteBranches { if let n = r.remoteName, !seen.contains(n) { seen.append(n) } }
-        for r in controller.remotes where !seen.contains(r.name) { seen.append(r.name) }
-        return seen
     }
 
     func viewRow(_ title: String, _ icon: String, _ view: RepoView, count: Int?) -> some View {

@@ -77,8 +77,8 @@ struct RefMenu: View {
         let c = controller
         switch ref.kind {
         case .localBranch:
-            if !ref.isHead { Button("Checkout \(ref.shortName)") { RepoActions.checkout(c, ref: ref) } }
-            if ref.behind > 0 && ref.ahead == 0 { Button("Fast-forward to \(upstreamName)") { RepoActions.fastForward(c, ref) } }
+            if !ref.isHead { Button("Switch to \(ref.shortName)") { RepoActions.checkout(c, ref: ref) } }
+            if ref.behind > 0 && ref.ahead == 0 { Button("Update from \(upstreamName)") { RepoActions.fastForward(c, ref) } }
             if !c.remotes.isEmpty { Button("Push…") { RepoActions.pushDialog(c) } }
             Divider()
             Button("New Branch from \(ref.shortName)…") { RepoActions.newBranch(c, at: ref.shortName) }
@@ -89,14 +89,14 @@ struct RefMenu: View {
                 Button("Rebase \(c.currentBranch ?? "HEAD") onto \(ref.shortName)…") { HistoryActions.rebase(c, ref.shortName) }
             }
             Divider()
-            Menu("Upstream") {
+            Menu("Tracking Branch") {
                 ForEach(c.remoteBranches) { r in Button(r.shortName) { RepoActions.setUpstream(c, ref, to: r) } }
-                if ref.upstream != nil { Divider(); Button("Unset Upstream") { RepoActions.setUpstream(c, ref, to: nil) } }
+                if ref.upstream != nil { Divider(); Button("Stop Tracking") { RepoActions.setUpstream(c, ref, to: nil) } }
             }
             Button("Rename…") { RepoActions.rename(c, ref) }
             Button("Delete…") { RepoActions.delete(c, [ref]) }.disabled(ref.isHead || ref.worktreePath != nil)
         case .remoteBranch:
-            Button("Checkout \(ref.shortName)") { RepoActions.checkout(c, ref: ref) }
+            Button("Switch to \(ref.shortName)") { RepoActions.checkout(c, ref: ref) }
             Button("New Branch from \(ref.shortName)…") { RepoActions.newBranch(c, at: ref.shortName) }
             Button("Merge \(ref.shortName) into \(c.currentBranch ?? "HEAD")…") { HistoryActions.merge(c, ref.shortName) }
             Button("Rebase \(c.currentBranch ?? "HEAD") onto \(ref.shortName)…") { HistoryActions.rebase(c, ref.shortName) }
@@ -139,8 +139,7 @@ struct StashMenu: View {
 enum HistoryActions {
     /// No ref given (menu/⌘⇧M): pick a branch first.
     static func mergeDialog(_ c: RepoController, ref: Ref?) {
-        if let ref { return merge(c, ref.shortName) }
-        pickBranch(c, title: "Merge into \(c.currentBranch ?? "HEAD")") { merge(c, $0) }
+        Sheets.present(MergeDialog(controller: c, ref: ref?.shortName), on: c.window)
     }
     static func rebaseDialog(_ c: RepoController, onto: Ref?) {
         if let onto { return rebase(c, onto.shortName) }

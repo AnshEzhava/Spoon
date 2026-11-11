@@ -78,7 +78,7 @@ enum MainMenu {
             item("Stash…", #selector(TabWindowController.stashAction(_:)), "h", [.command, .shift]),
             item("Quick Stash", #selector(TabWindowController.quickStashAction(_:)), "h", [.command, .shift, .option]),
             .separator(),
-            item("Checkout Branch…", #selector(TabWindowController.checkoutAction(_:)), "b"),
+            item("Switch Branch…", #selector(TabWindowController.checkoutAction(_:)), "b"),
             item("New Branch…", #selector(TabWindowController.newBranchAction(_:)), "b", [.command, .shift]),
             item("New Tag…", #selector(TabWindowController.newTagAction(_:)), "g", [.command, .shift]),
             item("Merge…", #selector(TabWindowController.mergeAction(_:)), "m", [.command, .shift]),

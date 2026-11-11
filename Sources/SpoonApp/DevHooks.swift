@@ -5,6 +5,7 @@ import AppKit
 ///   menu <A ▸ B>        perform a menu item by title path
 ///   open <path>         open a repository
 ///   file <path>         select a Local Changes file
+///   merge <branch>      open the merge dialog with <branch> picked
 ///   lines a-b           toggle diff rows in/out of the next commit
 ///   commit <subject>    commit the checked changes; undo performs ⌘Z
 ///   group <A/B>         show a group's dashboard; groupfetch / grouppull run it
@@ -59,6 +60,9 @@ enum DevHooks {
             AppDelegate.shared.current?.repoController?.details.tab = arg == "changes" ? .changes : arg == "tree" ? .tree : .commit
         case "open":
             AppDelegate.shared.openRepo(path: arg)
+        case "merge":
+            guard let c = AppDelegate.shared.current?.repoController else { return }
+            HistoryActions.mergeDialog(c, ref: c.refs.first { $0.shortName == arg })
         case "file":
             AppDelegate.shared.current?.repoController?.local.selection = [arg]
         case "lines":
